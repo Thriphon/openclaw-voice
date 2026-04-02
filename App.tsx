@@ -13,7 +13,7 @@ import {
   Animated,
 } from 'react-native';
 import { Audio } from 'expo-av';
-import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Types
 interface Message {
@@ -107,11 +107,11 @@ export default function App() {
 
   const loadConfig = async () => {
     try {
-      const serverUrl = await SecureStore.getItemAsync('serverUrl');
-      const token = await SecureStore.getItemAsync('token');
-      const sessionKey = await SecureStore.getItemAsync('sessionKey');
-
-      const voice = await SecureStore.getItemAsync('voice');
+      const serverUrl = await AsyncStorage.getItem('serverUrl');
+      const token = await AsyncStorage.getItem('token');
+      const sessionKey = await AsyncStorage.getItem('sessionKey');
+      const voice = await AsyncStorage.getItem('voice');
+      
       if (serverUrl && token) {
         setConfig({
           serverUrl,
@@ -128,22 +128,22 @@ export default function App() {
 
   const saveConfig = async (newConfig: Config) => {
     try {
-      await SecureStore.setItemAsync('serverUrl', newConfig.serverUrl);
-      await SecureStore.setItemAsync('token', newConfig.token);
-      await SecureStore.setItemAsync('sessionKey', newConfig.sessionKey);
-      await SecureStore.setItemAsync('voice', newConfig.voice);
+      await AsyncStorage.setItem('serverUrl', newConfig.serverUrl);
+      await AsyncStorage.setItem('token', newConfig.token);
+      await AsyncStorage.setItem('sessionKey', newConfig.sessionKey);
+      await AsyncStorage.setItem('voice', newConfig.voice);
       setConfig(newConfig);
       setIsConfigured(true);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to save config:', e);
-      Alert.alert('Error', 'Failed to save configuration');
+      Alert.alert('Error', `Failed to save: ${e.message}`);
     }
   };
 
   const changeVoice = async (voice: string) => {
     if (!config) return;
     const newConfig = { ...config, voice };
-    await SecureStore.setItemAsync('voice', voice);
+    await AsyncStorage.setItem('voice', voice);
     setConfig(newConfig);
   };
 
@@ -262,9 +262,7 @@ export default function App() {
           style: 'destructive',
           onPress: async () => {
             disconnect();
-            await SecureStore.deleteItemAsync('serverUrl');
-            await SecureStore.deleteItemAsync('token');
-            await SecureStore.deleteItemAsync('sessionKey');
+            await AsyncStorage.multiRemove(['serverUrl', 'token', 'sessionKey', 'voice']);
             setConfig(null);
             setIsConfigured(false);
             setMessages([]);
