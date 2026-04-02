@@ -834,6 +834,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 15,
+    paddingTop: Platform.OS === 'android' ? 45 : 15,
     borderBottomWidth: 1,
     borderBottomColor: '#2d2d44',
   },
@@ -921,6 +922,7 @@ const styles = StyleSheet.create({
   controls: {
     paddingVertical: 30,
     paddingHorizontal: 20,
+    paddingBottom: Platform.OS === 'android' ? 50 : 30,
     alignItems: 'center',
     borderTopWidth: 1,
     borderTopColor: '#2d2d44',
