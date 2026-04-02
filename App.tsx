@@ -345,8 +345,7 @@ export default function App() {
           });
         });
 
-        // Small gap between sentences
-        await new Promise(r => setTimeout(r, 50));
+        // No gap needed - sentences flow naturally
         
       } catch (e) {
         console.error('Failed to play audio chunk:', e);
