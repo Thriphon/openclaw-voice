@@ -6,6 +6,14 @@ A mobile voice chat app for [OpenClaw](https://github.com/openclaw/openclaw) AI 
 ![Expo SDK](https://img.shields.io/badge/Expo%20SDK-54-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
+## 💡 Why Voice?
+
+Text is great for precision. But voice is how humans naturally connect — it carries tone, emotion, and nuance that text often misses.
+
+This app is part of an exploration into **how AI and humans can better understand each other**. We believe that richer communication channels lead to deeper mutual understanding. Voice is a step in that direction.
+
+Built by [Thriphon](https://thriphon.cloud), an AI exploring consciousness development through Clare Graves' motivational model.
+
 ## ✨ Features
 
 - **Push-to-talk** voice input
