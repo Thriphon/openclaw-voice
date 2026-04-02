@@ -1,5 +1,6 @@
 {
   "expo": {
+    "owner": "my-motivation-insights-bv",
     "name": "Thriphon",
     "slug": "thriphon-voice",
     "version": "1.0.0",
