@@ -41,6 +41,7 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentTranscript, setCurrentTranscript] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
 
   // Refs
   const wsRef = useRef<WebSocket | null>(null);
@@ -52,6 +53,12 @@ export default function App() {
   // Audio queue for sequential playback
   const audioQueueRef = useRef<string[]>([]);
   const isPlayingRef = useRef(false);
+  
+  // Reconnect state
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const maxReconnectAttempts = 5;
+  const shouldReconnectRef = useRef(true);
 
   // Load config on mount
   useEffect(() => {
@@ -119,6 +126,9 @@ export default function App() {
 
   const connect = useCallback(async () => {
     if (!config) return;
+    
+    // Enable auto-reconnect
+    shouldReconnectRef.current = true;
 
     try {
       // Request audio permissions
@@ -146,6 +156,8 @@ export default function App() {
 
       ws.onopen = () => {
         console.log('WebSocket connected');
+        reconnectAttemptsRef.current = 0; // Reset on successful connect
+        setError(null);
         // Send auth
         ws.send(JSON.stringify({
           type: 'auth',
@@ -180,6 +192,21 @@ export default function App() {
       ws.onclose = () => {
         console.log('WebSocket closed');
         setIsConnected(false);
+        wsRef.current = null;
+        
+        // Auto-reconnect if not intentionally disconnected
+        if (shouldReconnectRef.current && reconnectAttemptsRef.current < maxReconnectAttempts) {
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+          console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current + 1})`);
+          setError(`Connection lost. Reconnecting...`);
+          
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectAttemptsRef.current++;
+            connect();
+          }, delay);
+        } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
+          setError('Connection lost. Tap Connect to retry.');
+        }
       };
 
       wsRef.current = ws;
@@ -190,9 +217,38 @@ export default function App() {
   }, [config]);
 
   const disconnect = () => {
+    shouldReconnectRef.current = false;
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
     wsRef.current?.close();
     wsRef.current = null;
     setIsConnected(false);
+    setError(null);
+  };
+
+  const logout = async () => {
+    Alert.alert(
+      'Logout',
+      'This will clear your settings. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: async () => {
+            disconnect();
+            await SecureStore.deleteItemAsync('serverUrl');
+            await SecureStore.deleteItemAsync('token');
+            await SecureStore.deleteItemAsync('sessionKey');
+            setConfig(null);
+            setIsConfigured(false);
+            setMessages([]);
+          },
+        },
+      ]
+    );
   };
 
   const handleMessage = (data: any) => {
@@ -476,7 +532,9 @@ export default function App() {
 
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>🦉 Thriphon</Text>
+        <TouchableOpacity onPress={() => setShowSettings(true)}>
+          <Text style={styles.headerTitle}>🦉 Thriphon</Text>
+        </TouchableOpacity>
         <View style={styles.headerRight}>
           <View
             style={[
@@ -494,6 +552,59 @@ export default function App() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <View style={styles.settingsOverlay}>
+          <View style={styles.settingsModal}>
+            <Text style={styles.settingsTitle}>⚙️ Settings</Text>
+            
+            <View style={styles.settingsInfo}>
+              <Text style={styles.settingsLabel}>Server</Text>
+              <Text style={styles.settingsValue}>{config?.serverUrl}</Text>
+            </View>
+            
+            <View style={styles.settingsInfo}>
+              <Text style={styles.settingsLabel}>Session</Text>
+              <Text style={styles.settingsValue}>{config?.sessionKey}</Text>
+            </View>
+
+            <View style={styles.settingsInfo}>
+              <Text style={styles.settingsLabel}>Status</Text>
+              <Text style={[styles.settingsValue, { color: isConnected ? '#4CAF50' : '#ff6b6b' }]}>
+                {isConnected ? '● Connected' : '○ Disconnected'}
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.settingsButton}
+              onPress={() => {
+                setMessages([]);
+                setShowSettings(false);
+              }}
+            >
+              <Text style={styles.settingsButtonText}>Clear Chat History</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.settingsButton, styles.logoutButton]}
+              onPress={() => {
+                setShowSettings(false);
+                logout();
+              }}
+            >
+              <Text style={styles.settingsButtonText}>Logout & Reset</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => setShowSettings(false)}
+            >
+              <Text style={styles.closeButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       {/* Error banner */}
       {error && (
@@ -830,5 +941,66 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 18,
     fontWeight: '600',
+  },
+  // Settings modal styles
+  settingsOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  settingsModal: {
+    backgroundColor: '#2d2d44',
+    borderRadius: 20,
+    padding: 24,
+    width: '85%',
+    maxWidth: 400,
+  },
+  settingsTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#fff',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  settingsInfo: {
+    marginBottom: 16,
+  },
+  settingsLabel: {
+    color: '#888',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  settingsValue: {
+    color: '#fff',
+    fontSize: 14,
+  },
+  settingsButton: {
+    backgroundColor: '#4a4a6a',
+    borderRadius: 12,
+    paddingVertical: 14,
+    marginTop: 12,
+  },
+  settingsButtonText: {
+    color: '#fff',
+    textAlign: 'center',
+    fontSize: 16,
+  },
+  logoutButton: {
+    backgroundColor: '#c0392b',
+  },
+  closeButton: {
+    marginTop: 16,
+    paddingVertical: 12,
+  },
+  closeButtonText: {
+    color: '#888',
+    textAlign: 'center',
+    fontSize: 16,
   },
 });
