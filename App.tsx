@@ -27,7 +27,20 @@ interface Config {
   serverUrl: string;
   token: string;
   sessionKey: string;
+  voice: string;
 }
+
+const AVAILABLE_VOICES = [
+  { id: 'nova', name: 'Nova', description: 'Warm female' },
+  { id: 'alloy', name: 'Alloy', description: 'Neutral balanced' },
+  { id: 'echo', name: 'Echo', description: 'Smooth male' },
+  { id: 'fable', name: 'Fable', description: 'British accent' },
+  { id: 'onyx', name: 'Onyx', description: 'Deep male' },
+  { id: 'shimmer', name: 'Shimmer', description: 'Soft female' },
+  { id: 'ash', name: 'Ash', description: 'Clear neutral' },
+  { id: 'coral', name: 'Coral', description: 'Friendly warm' },
+  { id: 'sage', name: 'Sage', description: 'Calm wise' },
+];
 
 // Main App
 export default function App() {
@@ -98,11 +111,13 @@ export default function App() {
       const token = await SecureStore.getItemAsync('token');
       const sessionKey = await SecureStore.getItemAsync('sessionKey');
 
+      const voice = await SecureStore.getItemAsync('voice');
       if (serverUrl && token) {
         setConfig({
           serverUrl,
           token,
           sessionKey: sessionKey || 'voice:mobile',
+          voice: voice || 'nova',
         });
         setIsConfigured(true);
       }
@@ -116,12 +131,20 @@ export default function App() {
       await SecureStore.setItemAsync('serverUrl', newConfig.serverUrl);
       await SecureStore.setItemAsync('token', newConfig.token);
       await SecureStore.setItemAsync('sessionKey', newConfig.sessionKey);
+      await SecureStore.setItemAsync('voice', newConfig.voice);
       setConfig(newConfig);
       setIsConfigured(true);
     } catch (e) {
       console.error('Failed to save config:', e);
       Alert.alert('Error', 'Failed to save configuration');
     }
+  };
+
+  const changeVoice = async (voice: string) => {
+    if (!config) return;
+    const newConfig = { ...config, voice };
+    await SecureStore.setItemAsync('voice', voice);
+    setConfig(newConfig);
   };
 
   const connect = useCallback(async () => {
@@ -509,6 +532,7 @@ export default function App() {
             type: 'audio',
             data: base64,
             format: Platform.OS === 'web' ? 'webm' : 'm4a',
+            voice: config?.voice || 'nova',
           }));
         };
         reader.readAsDataURL(blob);
@@ -574,6 +598,28 @@ export default function App() {
               <Text style={[styles.settingsValue, { color: isConnected ? '#4CAF50' : '#ff6b6b' }]}>
                 {isConnected ? '● Connected' : '○ Disconnected'}
               </Text>
+            </View>
+
+            <View style={styles.settingsInfo}>
+              <Text style={styles.settingsLabel}>Voice</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.voiceSelector}>
+                {AVAILABLE_VOICES.map((v) => (
+                  <TouchableOpacity
+                    key={v.id}
+                    style={[
+                      styles.voiceOption,
+                      config?.voice === v.id && styles.voiceOptionSelected,
+                    ]}
+                    onPress={() => changeVoice(v.id)}
+                  >
+                    <Text style={[
+                      styles.voiceOptionName,
+                      config?.voice === v.id && styles.voiceOptionNameSelected,
+                    ]}>{v.name}</Text>
+                    <Text style={styles.voiceOptionDesc}>{v.description}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
             </View>
 
             <TouchableOpacity
@@ -1002,5 +1048,34 @@ const styles = StyleSheet.create({
     color: '#888',
     textAlign: 'center',
     fontSize: 16,
+  },
+  voiceSelector: {
+    marginTop: 8,
+    marginHorizontal: -8,
+  },
+  voiceOption: {
+    backgroundColor: '#3d3d5c',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginHorizontal: 4,
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  voiceOptionSelected: {
+    backgroundColor: '#5c6bc0',
+  },
+  voiceOptionName: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  voiceOptionNameSelected: {
+    color: '#fff',
+  },
+  voiceOptionDesc: {
+    color: '#aaa',
+    fontSize: 11,
+    marginTop: 2,
   },
 });
