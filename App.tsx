@@ -128,15 +128,21 @@ export default function App() {
 
   const saveConfig = async (newConfig: Config) => {
     try {
-      await AsyncStorage.setItem('serverUrl', newConfig.serverUrl);
-      await AsyncStorage.setItem('token', newConfig.token);
-      await AsyncStorage.setItem('sessionKey', newConfig.sessionKey);
-      await AsyncStorage.setItem('voice', newConfig.voice);
+      console.log('Saving config...', { serverUrl: newConfig.serverUrl?.substring(0, 30), hasToken: !!newConfig.token });
+      await AsyncStorage.setItem('serverUrl', newConfig.serverUrl || '');
+      console.log('Saved serverUrl');
+      await AsyncStorage.setItem('token', newConfig.token || '');
+      console.log('Saved token');
+      await AsyncStorage.setItem('sessionKey', newConfig.sessionKey || 'voice:mobile');
+      console.log('Saved sessionKey');
+      await AsyncStorage.setItem('voice', newConfig.voice || 'nova');
+      console.log('Saved voice');
       setConfig(newConfig);
       setIsConfigured(true);
+      console.log('Config saved successfully!');
     } catch (e: any) {
       console.error('Failed to save config:', e);
-      Alert.alert('Error', `Failed to save: ${e.message}`);
+      Alert.alert('Error', `Failed to save configuration.\n\nDetails: ${e.message || e.toString()}\n\nPlease try again.`);
     }
   };
 
