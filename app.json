@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "OpenClaw Voice",
-    "slug": "openclaw-voice",
+    "name": "Thriphon",
+    "slug": "thriphon-voice",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -13,10 +13,11 @@
       "backgroundColor": "#1a1a2e"
     },
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.openclaw.voice",
+      "supportsTablet": false,
+      "bundleIdentifier": "com.mymotivation.thriphon",
+      "buildNumber": "1",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "This app needs microphone access to enable voice chat with your AI assistant.",
+        "NSMicrophoneUsageDescription": "Thriphon needs microphone access to enable voice conversations.",
         "UIBackgroundModes": ["audio"]
       }
     },
@@ -25,7 +26,8 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#1a1a2e"
       },
-      "package": "com.openclaw.voice",
+      "package": "com.mymotivation.thriphon",
+      "versionCode": 1,
       "permissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS"
