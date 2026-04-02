@@ -310,49 +310,40 @@ export default function App() {
         return;
       }
 
-      // Stop any playing audio
+      // Stop any playing audio first
       if (soundRef.current) {
-        await soundRef.current.stopAsync();
+        try {
+          await soundRef.current.stopAsync();
+          await soundRef.current.unloadAsync();
+        } catch (e) {
+          // Ignore errors when stopping
+        }
+        soundRef.current = null;
       }
 
-      // Ensure we have permission and proper audio mode
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') {
+      // Request permissions
+      console.log('Requesting permissions...');
+      const permResponse = await Audio.requestPermissionsAsync();
+      if (permResponse.status !== 'granted') {
         setError('Microphone permission required');
         return;
       }
 
+      // Set audio mode for recording
+      console.log('Setting audio mode...');
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
       });
 
-      // Use createAsync instead of manual prepare/start (Expo SDK 50+)
+      // Use the preset - more reliable than custom options
+      console.log('Creating recording...');
       const { recording } = await Audio.Recording.createAsync(
-        {
-          android: {
-            extension: '.m4a',
-            outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-            audioEncoder: Audio.AndroidAudioEncoder.AAC,
-            sampleRate: 16000,
-            numberOfChannels: 1,
-            bitRate: 128000,
-          },
-          ios: {
-            extension: '.m4a',
-            outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-            audioQuality: Audio.IOSAudioQuality.HIGH,
-            sampleRate: 16000,
-            numberOfChannels: 1,
-            bitRate: 128000,
-          },
-          web: {
-            mimeType: 'audio/webm',
-            bitsPerSecond: 128000,
-          },
-        }
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
       );
 
+      console.log('Recording started!');
       recordingRef.current = recording;
       setIsRecording(true);
 
