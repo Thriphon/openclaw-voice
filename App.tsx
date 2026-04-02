@@ -137,7 +137,13 @@ export default function App() {
       console.log('Saved sessionKey');
       await AsyncStorage.setItem('voice', newConfig.voice || 'nova');
       console.log('Saved voice');
+      
+      // Small delay to ensure storage is committed before state change
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       setConfig(newConfig);
+      // Another small delay before switching screens
+      await new Promise(resolve => setTimeout(resolve, 50));
       setIsConfigured(true);
       console.log('Config saved successfully!');
     } catch (e: any) {
@@ -257,7 +263,7 @@ export default function App() {
     setError(null);
   };
 
-  const logout = async () => {
+  const logout = () => {
     Alert.alert(
       'Logout',
       'This will clear your settings. Continue?',
@@ -266,12 +272,15 @@ export default function App() {
         {
           text: 'Logout',
           style: 'destructive',
-          onPress: async () => {
+          onPress: () => {
+            // Run logout synchronously first, then async cleanup
             disconnect();
-            await AsyncStorage.multiRemove(['serverUrl', 'token', 'sessionKey', 'voice']);
             setConfig(null);
             setIsConfigured(false);
             setMessages([]);
+            // Clear storage in background
+            AsyncStorage.multiRemove(['serverUrl', 'token', 'sessionKey', 'voice'])
+              .catch(e => console.error('Failed to clear storage:', e));
           },
         },
       ]
