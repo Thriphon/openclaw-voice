@@ -151,14 +151,19 @@ export default function App() {
       };
 
       ws.onmessage = async (event) => {
+        // Check if it's binary audio data
+        if (typeof event.data !== 'string') {
+          console.log('Received binary audio data:', event.data.byteLength || event.data.size, 'bytes');
+          await playAudio(event.data);
+          return;
+        }
+        
+        // JSON message
         try {
           const data = JSON.parse(event.data);
           handleMessage(data);
         } catch (e) {
-          // Binary audio data
-          if (event.data instanceof Blob) {
-            await playAudio(event.data);
-          }
+          console.error('Failed to parse message:', e);
         }
       };
 
@@ -269,34 +274,64 @@ export default function App() {
     });
   };
 
-  const playAudio = async (blob: Blob) => {
+  const playAudio = async (audioData: Blob | ArrayBuffer) => {
     try {
-      // Convert blob to base64 data URI
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64 = reader.result as string;
-        
-        // Unload previous sound
-        if (soundRef.current) {
-          await soundRef.current.unloadAsync();
+      setIsSpeaking(true);
+      
+      // Set audio mode for playback
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+      });
+
+      let base64: string;
+      
+      if (audioData instanceof ArrayBuffer) {
+        // Convert ArrayBuffer to base64
+        const bytes = new Uint8Array(audioData);
+        let binary = '';
+        for (let i = 0; i < bytes.byteLength; i++) {
+          binary += String.fromCharCode(bytes[i]);
         }
-
-        // Create and play new sound
-        const { sound } = await Audio.Sound.createAsync(
-          { uri: base64 },
-          { shouldPlay: true }
-        );
-        soundRef.current = sound;
-
-        sound.setOnPlaybackStatusUpdate((status) => {
-          if (status.isLoaded && status.didJustFinish) {
-            setIsSpeaking(false);
-          }
+        base64 = 'data:audio/mpeg;base64,' + btoa(binary);
+      } else if (audioData instanceof Blob) {
+        // Convert Blob to base64
+        base64 = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(audioData);
         });
-      };
-      reader.readAsDataURL(blob);
+      } else {
+        console.error('Unknown audio data type:', typeof audioData);
+        setIsSpeaking(false);
+        return;
+      }
+
+      console.log('Playing audio, base64 length:', base64.length);
+      
+      // Unload previous sound
+      if (soundRef.current) {
+        try {
+          await soundRef.current.unloadAsync();
+        } catch (e) {}
+        soundRef.current = null;
+      }
+
+      // Create and play new sound
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: base64 },
+        { shouldPlay: true }
+      );
+      soundRef.current = sound;
+
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.isLoaded && status.didJustFinish) {
+          setIsSpeaking(false);
+        }
+      });
     } catch (e) {
       console.error('Failed to play audio:', e);
+      setIsSpeaking(false);
     }
   };
 
