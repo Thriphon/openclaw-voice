@@ -272,12 +272,16 @@ export default function App() {
         {
           text: 'Logout',
           style: 'destructive',
-          onPress: () => {
-            // Run logout synchronously first, then async cleanup
+          onPress: async () => {
+            // Stop any audio first
+            await stopAudioPlayback();
+            // Run logout
             disconnect();
             setConfig(null);
             setIsConfigured(false);
             setMessages([]);
+            setCurrentTranscript('');
+            setIsProcessing(false);
             // Clear storage in background
             AsyncStorage.multiRemove(['serverUrl', 'token', 'sessionKey', 'voice'])
               .catch(e => console.error('Failed to clear storage:', e));
@@ -394,6 +398,24 @@ export default function App() {
     }
   };
 
+  // Stop all audio playback and reset state
+  const stopAudioPlayback = async () => {
+    // Clear queue
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
+    
+    // Stop and unload current sound
+    if (soundRef.current) {
+      try {
+        await soundRef.current.stopAsync();
+        await soundRef.current.unloadAsync();
+      } catch (e) {}
+      soundRef.current = null;
+    }
+    
+    setIsSpeaking(false);
+  };
+
   // Process audio queue sequentially
   const processAudioQueue = async () => {
     if (isPlayingRef.current || audioQueueRef.current.length === 0) {
@@ -403,13 +425,20 @@ export default function App() {
     isPlayingRef.current = true;
     setIsSpeaking(true);
 
-    // Set audio mode for playback
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      playsInSilentModeIOS: true,
-    });
+    // Set audio mode for playback (works for both iOS and Android)
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
+    } catch (e) {
+      console.error('Failed to set audio mode:', e);
+    }
 
-    while (audioQueueRef.current.length > 0) {
+    while (audioQueueRef.current.length > 0 && isPlayingRef.current) {
       const base64 = audioQueueRef.current.shift()!;
       
       try {
@@ -428,16 +457,26 @@ export default function App() {
         );
         soundRef.current = sound;
 
-        // Wait for playback to complete
+        // Wait for playback to complete with timeout
         await new Promise<void>((resolve) => {
+          const timeout = setTimeout(() => {
+            console.log('Audio playback timeout, moving to next');
+            resolve();
+          }, 30000); // 30 second max per chunk
+          
           sound.setOnPlaybackStatusUpdate((status) => {
             if (status.isLoaded && status.didJustFinish) {
+              clearTimeout(timeout);
+              resolve();
+            }
+            // Also resolve on error
+            if (!status.isLoaded && 'error' in status) {
+              clearTimeout(timeout);
+              console.error('Audio playback error:', status);
               resolve();
             }
           });
         });
-
-        // No gap needed - sentences flow naturally
         
       } catch (e) {
         console.error('Failed to play audio chunk:', e);
@@ -637,8 +676,11 @@ export default function App() {
 
             <TouchableOpacity
               style={styles.settingsButton}
-              onPress={() => {
+              onPress={async () => {
+                await stopAudioPlayback();
                 setMessages([]);
+                setCurrentTranscript('');
+                setIsProcessing(false);
                 setShowSettings(false);
               }}
             >
