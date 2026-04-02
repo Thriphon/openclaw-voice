@@ -48,6 +48,10 @@ export default function App() {
   const soundRef = useRef<Audio.Sound | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  
+  // Audio queue for sequential playback
+  const audioQueueRef = useRef<string[]>([]);
+  const isPlayingRef = useRef(false);
 
   // Load config on mount
   useEffect(() => {
@@ -274,64 +278,100 @@ export default function App() {
     });
   };
 
-  const playAudio = async (audioData: Blob | ArrayBuffer) => {
+  // Convert audio data to base64 URI
+  const audioToBase64 = async (audioData: Blob | ArrayBuffer): Promise<string | null> => {
     try {
-      setIsSpeaking(true);
-      
-      // Set audio mode for playback
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-      });
-
-      let base64: string;
-      
       if (audioData instanceof ArrayBuffer) {
-        // Convert ArrayBuffer to base64
         const bytes = new Uint8Array(audioData);
         let binary = '';
         for (let i = 0; i < bytes.byteLength; i++) {
           binary += String.fromCharCode(bytes[i]);
         }
-        base64 = 'data:audio/mpeg;base64,' + btoa(binary);
+        return 'data:audio/mpeg;base64,' + btoa(binary);
       } else if (audioData instanceof Blob) {
-        // Convert Blob to base64
-        base64 = await new Promise((resolve) => {
+        return await new Promise((resolve) => {
           const reader = new FileReader();
           reader.onloadend = () => resolve(reader.result as string);
           reader.readAsDataURL(audioData);
         });
-      } else {
-        console.error('Unknown audio data type:', typeof audioData);
-        setIsSpeaking(false);
-        return;
       }
-
-      console.log('Playing audio, base64 length:', base64.length);
-      
-      // Unload previous sound
-      if (soundRef.current) {
-        try {
-          await soundRef.current.unloadAsync();
-        } catch (e) {}
-        soundRef.current = null;
-      }
-
-      // Create and play new sound
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: base64 },
-        { shouldPlay: true }
-      );
-      soundRef.current = sound;
-
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          setIsSpeaking(false);
-        }
-      });
+      return null;
     } catch (e) {
-      console.error('Failed to play audio:', e);
-      setIsSpeaking(false);
+      console.error('Failed to convert audio:', e);
+      return null;
+    }
+  };
+
+  // Process audio queue sequentially
+  const processAudioQueue = async () => {
+    if (isPlayingRef.current || audioQueueRef.current.length === 0) {
+      return;
+    }
+
+    isPlayingRef.current = true;
+    setIsSpeaking(true);
+
+    // Set audio mode for playback
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+      playsInSilentModeIOS: true,
+    });
+
+    while (audioQueueRef.current.length > 0) {
+      const base64 = audioQueueRef.current.shift()!;
+      
+      try {
+        // Unload previous sound
+        if (soundRef.current) {
+          try {
+            await soundRef.current.unloadAsync();
+          } catch (e) {}
+          soundRef.current = null;
+        }
+
+        // Create and play sound
+        const { sound } = await Audio.Sound.createAsync(
+          { uri: base64 },
+          { shouldPlay: true }
+        );
+        soundRef.current = sound;
+
+        // Wait for playback to complete
+        await new Promise<void>((resolve) => {
+          sound.setOnPlaybackStatusUpdate((status) => {
+            if (status.isLoaded && status.didJustFinish) {
+              resolve();
+            }
+          });
+        });
+
+        // Small gap between sentences
+        await new Promise(r => setTimeout(r, 50));
+        
+      } catch (e) {
+        console.error('Failed to play audio chunk:', e);
+      }
+    }
+
+    isPlayingRef.current = false;
+    setIsSpeaking(false);
+    
+    // Clean up last sound
+    if (soundRef.current) {
+      try {
+        await soundRef.current.unloadAsync();
+      } catch (e) {}
+      soundRef.current = null;
+    }
+  };
+
+  // Queue audio for playback
+  const playAudio = async (audioData: Blob | ArrayBuffer) => {
+    const base64 = await audioToBase64(audioData);
+    if (base64) {
+      console.log('Queuing audio chunk, queue size:', audioQueueRef.current.length + 1);
+      audioQueueRef.current.push(base64);
+      processAudioQueue();
     }
   };
 
