@@ -11,6 +11,8 @@ import {
   SafeAreaView,
   StatusBar,
   Animated,
+  KeyboardAvoidingView,
+  Keyboard,
 } from 'react-native';
 import { Audio } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -55,6 +57,7 @@ export default function App() {
   const [currentTranscript, setCurrentTranscript] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [textInput, setTextInput] = useState('');
 
   // Refs
   const wsRef = useRef<WebSocket | null>(null);
@@ -596,6 +599,24 @@ export default function App() {
     }
   };
 
+  const sendTextMessage = async () => {
+    const text = textInput.trim();
+    if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (isProcessing || isSpeaking) return;
+
+    // Clear input and add message
+    setTextInput('');
+    addMessage('user', text);
+    setIsProcessing(true);
+
+    // Send text message to server
+    wsRef.current.send(JSON.stringify({
+      type: 'text',
+      text: text,
+      voice: config?.voice || 'nova',
+    }));
+  };
+
   // Config screen
   if (!isConfigured) {
     return <ConfigScreen onSave={saveConfig} />;
@@ -605,6 +626,11 @@ export default function App() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
+      <KeyboardAvoidingView 
+        style={styles.keyboardAvoid}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      >
 
       {/* Header */}
       <View style={styles.header}>
@@ -762,35 +788,47 @@ export default function App() {
         )}
       </ScrollView>
 
-      {/* Push to talk button */}
-      <View style={styles.controls}>
-        <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+      {/* Text input */}
+      <View style={styles.textInputContainer}>
+        <TextInput
+          style={styles.textInputField}
+          value={textInput}
+          onChangeText={setTextInput}
+          placeholder="Type a message..."
+          placeholderTextColor="#666"
+          editable={isConnected && !isProcessing && !isSpeaking && !isRecording}
+          onSubmitEditing={sendTextMessage}
+          returnKeyType="send"
+        />
+        {textInput.trim() ? (
           <TouchableOpacity
-            onPressIn={startRecording}
-            onPressOut={stopRecording}
+            style={styles.sendButton}
+            onPress={sendTextMessage}
             disabled={!isConnected || isProcessing || isSpeaking}
-            style={[
-              styles.recordButton,
-              isRecording && styles.recordButtonActive,
-              (!isConnected || isProcessing || isSpeaking) &&
-                styles.recordButtonDisabled,
-            ]}
           >
-            <Text style={styles.recordButtonIcon}>
-              {isRecording ? '🔴' : isSpeaking ? '🔊' : isProcessing ? '⏳' : '🎤'}
-            </Text>
-            <Text style={styles.recordButtonText}>
-              {isRecording
-                ? 'Listening...'
-                : isSpeaking
-                ? 'Speaking...'
-                : isProcessing
-                ? 'Processing...'
-                : 'Hold to Talk'}
-            </Text>
+            <Text style={styles.sendButtonText}>↑</Text>
           </TouchableOpacity>
-        </Animated.View>
+        ) : (
+          <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+            <TouchableOpacity
+              onPressIn={startRecording}
+              onPressOut={stopRecording}
+              disabled={!isConnected || isProcessing || isSpeaking}
+              style={[
+                styles.micButton,
+                isRecording && styles.micButtonActive,
+                (!isConnected || isProcessing || isSpeaking) &&
+                  styles.micButtonDisabled,
+              ]}
+            >
+              <Text style={styles.micButtonIcon}>
+                {isRecording ? '🔴' : isSpeaking ? '🔊' : isProcessing ? '⏳' : '🎤'}
+              </Text>
+            </TouchableOpacity>
+          </Animated.View>
+        )}
       </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -867,6 +905,11 @@ function ConfigScreen({ onSave }: { onSave: (config: Config) => void }) {
 // Styles
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+    backgroundColor: '#1a1a2e',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+  },
+  keyboardAvoid: {
     flex: 1,
     backgroundColor: '#1a1a2e',
   },
@@ -961,42 +1004,58 @@ const styles = StyleSheet.create({
   assistantMessageText: {
     color: '#e0e0e0',
   },
-  controls: {
-    paddingVertical: 30,
-    paddingHorizontal: 20,
-    paddingBottom: Platform.OS === 'android' ? 50 : 30,
+  // Text input container
+  textInputContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    paddingBottom: Platform.OS === 'android' ? 30 : Platform.OS === 'ios' ? 24 : 10,
     borderTopWidth: 1,
     borderTopColor: '#2d2d44',
+    backgroundColor: '#1a1a2e',
+    gap: 8,
   },
-  recordButton: {
-    width: 160,
-    height: 160,
-    borderRadius: 80,
-    backgroundColor: '#4a4a6a',
+  textInputField: {
+    flex: 1,
+    backgroundColor: '#2d2d44',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    color: '#fff',
+    fontSize: 16,
+    maxHeight: 100,
+  },
+  sendButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#5c6bc0',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
   },
-  recordButtonActive: {
+  sendButtonText: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: 'bold',
+  },
+  micButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#5c6bc0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  micButtonActive: {
     backgroundColor: '#e53935',
   },
-  recordButtonDisabled: {
+  micButtonDisabled: {
     backgroundColor: '#333',
     opacity: 0.6,
   },
-  recordButtonIcon: {
-    fontSize: 40,
-    marginBottom: 8,
-  },
-  recordButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
+  micButtonIcon: {
+    fontSize: 20,
   },
   // Config screen styles
   configContainer: {
