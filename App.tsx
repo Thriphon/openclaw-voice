@@ -131,15 +131,15 @@ export default function App() {
 
   const saveConfig = async (newConfig: Config) => {
     try {
-      console.log('Saving config...', { serverUrl: newConfig.serverUrl?.substring(0, 30), hasToken: !!newConfig.token });
+      // Debug removed
       await AsyncStorage.setItem('serverUrl', newConfig.serverUrl || '');
-      console.log('Saved serverUrl');
+      // Debug removed
       await AsyncStorage.setItem('token', newConfig.token || '');
-      console.log('Saved token');
+      // Debug removed
       await AsyncStorage.setItem('sessionKey', newConfig.sessionKey || 'voice:mobile');
-      console.log('Saved sessionKey');
+      // Debug removed
       await AsyncStorage.setItem('voice', newConfig.voice || 'nova');
-      console.log('Saved voice');
+      // Debug removed
       
       // Small delay to ensure storage is committed before state change
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -148,7 +148,7 @@ export default function App() {
       // Another small delay before switching screens
       await new Promise(resolve => setTimeout(resolve, 50));
       setIsConfigured(true);
-      console.log('Config saved successfully!');
+      // Debug removed
     } catch (e: any) {
       console.error('Failed to save config:', e);
       Alert.alert('Error', `Failed to save configuration.\n\nDetails: ${e.message || e.toString()}\n\nPlease try again.`);
@@ -188,12 +188,12 @@ export default function App() {
       // Server expects /ws path for WebSocket
       const baseUrl = config.serverUrl.replace('/api/voice', '').replace(/^http/, 'ws');
       const wsUrl = baseUrl + '/api/voice/ws';
-      console.log('Connecting to:', wsUrl);
+      // Debug removed
 
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
-        console.log('WebSocket connected');
+        // Debug removed
         reconnectAttemptsRef.current = 0; // Reset on successful connect
         setError(null);
         // Send auth
@@ -207,7 +207,7 @@ export default function App() {
       ws.onmessage = async (event) => {
         // Check if it's binary audio data
         if (typeof event.data !== 'string') {
-          console.log('Received binary audio data:', event.data.byteLength || event.data.size, 'bytes');
+          // Debug removed
           await playAudio(event.data);
           return;
         }
@@ -228,14 +228,14 @@ export default function App() {
       };
 
       ws.onclose = () => {
-        console.log('WebSocket closed');
+        // Debug removed
         setIsConnected(false);
         wsRef.current = null;
         
         // Auto-reconnect if not intentionally disconnected
         if (shouldReconnectRef.current && reconnectAttemptsRef.current < maxReconnectAttempts) {
           const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
-          console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current + 1})`);
+          // Debug removed
           setError(`Connection lost. Reconnecting...`);
           
           reconnectTimeoutRef.current = setTimeout(() => {
@@ -463,7 +463,7 @@ export default function App() {
         // Wait for playback to complete with timeout
         await new Promise<void>((resolve) => {
           const timeout = setTimeout(() => {
-            console.log('Audio playback timeout, moving to next');
+            // Debug removed
             resolve();
           }, 30000); // 30 second max per chunk
           
@@ -502,7 +502,7 @@ export default function App() {
   const playAudio = async (audioData: Blob | ArrayBuffer) => {
     const base64 = await audioToBase64(audioData);
     if (base64) {
-      console.log('Queuing audio chunk, queue size:', audioQueueRef.current.length + 1);
+      // Debug removed
       audioQueueRef.current.push(base64);
       processAudioQueue();
     }
@@ -530,7 +530,7 @@ export default function App() {
       }
 
       // Request permissions
-      console.log('Requesting permissions...');
+      // Debug removed
       const permResponse = await Audio.requestPermissionsAsync();
       if (permResponse.status !== 'granted') {
         setError('Microphone permission required');
@@ -538,7 +538,7 @@ export default function App() {
       }
 
       // Set audio mode for recording
-      console.log('Setting audio mode...');
+      // Debug removed
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
@@ -546,12 +546,12 @@ export default function App() {
       });
 
       // Use the preset - more reliable than custom options
-      console.log('Creating recording...');
+      // Debug removed
       const { recording } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY
       );
 
-      console.log('Recording started!');
+      // Debug removed
       recordingRef.current = recording;
       setIsRecording(true);
 
