@@ -29,7 +29,7 @@
   "submit": {
     "production": {
       "ios": {
-        "appleId": "jan-kees@mymotivationinsights.com",
+        "appleId": "FILL_IN_YOUR_APPLE_ID",
         "ascAppId": "FILL_IN_AFTER_APP_STORE_CONNECT_SETUP",
         "appleTeamId": "FILL_IN_YOUR_TEAM_ID"
       },
