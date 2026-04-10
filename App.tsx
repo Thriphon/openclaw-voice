@@ -1010,7 +1010,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 10,
-    paddingBottom: Platform.OS === 'android' ? 30 : Platform.OS === 'ios' ? 24 : 10,
+    paddingBottom: Platform.OS === 'android' ? 60 : Platform.OS === 'ios' ? 24 : 10,
     borderTopWidth: 1,
     borderTopColor: '#2d2d44',
     backgroundColor: '#1a1a2e',
