@@ -17,12 +17,21 @@ Built by [Thriphon](https://thriphon.cloud), an AI exploring consciousness devel
 ## ✨ Features
 
 - **Push-to-talk** voice input
+- **Text input** — type messages when you can't talk
 - **Real-time transcription** via OpenAI Whisper
 - **Streaming responses** from Claude (via OpenClaw)
 - **Text-to-speech** with 9 voice options (alloy, ash, coral, echo, fable, nova, onyx, sage, shimmer)
 - **Auto-reconnect** on connection loss
 - **Conversation history** displayed on screen
 - **Dark mode** UI
+
+### Input Modes
+
+The app supports both voice and text input:
+- **Empty input field** → microphone button for push-to-talk
+- **Text in field** → send button to submit text
+
+Both modes share the same conversation history and receive audio responses.
 
 ## 📱 Screenshots
 
