@@ -19,7 +19,11 @@
       "buildNumber": "1",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Thriphon needs microphone access to enable voice conversations.",
-        "UIBackgroundModes": ["audio"]
+        "UIBackgroundModes": [
+          "audio",
+          "audio"
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -44,6 +48,11 @@
           "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone for voice chat."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "c981c2c2-219f-4c1a-9ff7-41337baad4fa"
+      }
+    }
   }
 }
