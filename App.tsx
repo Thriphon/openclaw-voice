@@ -59,6 +59,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [textInput, setTextInput] = useState('');
+  const [inputHeight, setInputHeight] = useState(0);
 
   // Refs
   const wsRef = useRef<WebSocket | null>(null);
@@ -614,6 +615,15 @@ export default function App() {
     }
   };
 
+  // Tap-to-toggle mic: first tap starts recording, second tap stops & sends.
+  const toggleRecording = async () => {
+    if (isRecording) {
+      await stopRecording();
+    } else {
+      await startRecording();
+    }
+  };
+
   const sendTextMessage = async () => {
     const text = textInput.trim();
     if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
@@ -621,6 +631,7 @@ export default function App() {
 
     // Clear input and add message
     setTextInput('');
+    setInputHeight(0);
     addMessage('user', text);
     setIsProcessing(true);
 
@@ -766,7 +777,7 @@ export default function App() {
             <Text style={styles.emptyStateEmoji}>🦉</Text>
             <Text style={styles.emptyStateText}>
               {isConnected
-                ? 'Hold the button to talk'
+                ? 'Tap the mic to start, tap again to send'
                 : 'Tap Connect to start'}
             </Text>
           </View>
@@ -803,14 +814,19 @@ export default function App() {
       {/* Text input */}
       <View style={styles.textInputContainer}>
         <TextInput
-          style={styles.textInputField}
+          style={[
+            styles.textInputField,
+            { height: Math.min(Math.max(44, inputHeight), 140) },
+          ]}
           value={textInput}
           onChangeText={setTextInput}
+          onContentSizeChange={(e) =>
+            setInputHeight(e.nativeEvent.contentSize.height + 20)
+          }
           placeholder="Type a message..."
           placeholderTextColor="#666"
           editable={isConnected && !isProcessing && !isSpeaking && !isRecording}
-          onSubmitEditing={sendTextMessage}
-          returnKeyType="send"
+          multiline
         />
         {textInput.trim() ? (
           <TouchableOpacity
@@ -823,8 +839,7 @@ export default function App() {
         ) : (
           <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
             <TouchableOpacity
-              onPressIn={startRecording}
-              onPressOut={stopRecording}
+              onPress={toggleRecording}
               disabled={!isConnected || isProcessing || isSpeaking}
               style={[
                 styles.micButton,
@@ -1019,7 +1034,7 @@ const styles = StyleSheet.create({
   // Text input container
   textInputContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     paddingHorizontal: 12,
     paddingVertical: 10,
     paddingBottom: Platform.OS === 'android' ? 60 : Platform.OS === 'ios' ? 24 : 10,
@@ -1033,10 +1048,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#2d2d44',
     borderRadius: 20,
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingTop: 12,
+    paddingBottom: 12,
     color: '#fff',
     fontSize: 16,
-    maxHeight: 100,
+    textAlignVertical: 'center',
   },
   sendButton: {
     width: 44,
