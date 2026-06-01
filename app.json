@@ -16,11 +16,9 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.mymotivation.thriphon",
-      "buildNumber": "1",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Thriphon needs microphone access to enable voice conversations.",
         "UIBackgroundModes": [
-          "audio",
           "audio"
         ],
         "ITSAppUsesNonExemptEncryption": false
@@ -32,7 +30,6 @@
         "backgroundColor": "#1a1a2e"
       },
       "package": "com.mymotivation.thriphon",
-      "versionCode": 1,
       "permissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS"

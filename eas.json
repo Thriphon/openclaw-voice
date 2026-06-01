@@ -11,10 +11,12 @@
     "preview": {
       "distribution": "internal",
       "ios": {
-        "simulator": false
+        "simulator": false,
+        "autoIncrement": true
       },
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "autoIncrement": true
       }
     },
     "production": {
