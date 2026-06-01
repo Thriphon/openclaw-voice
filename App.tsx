@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { Audio } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import ChatMarkdown from './ChatMarkdown';
 
 // Types
 interface Message {
@@ -66,8 +67,10 @@ export default function App() {
   const scrollViewRef = useRef<ScrollView>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   
-  // Audio queue for sequential playback
-  const audioQueueRef = useRef<string[]>([]);
+  // Audio queue for sequential playback.
+  // Holds pending base64-conversion promises so the (potentially heavy) byte
+  // conversion happens off the critical path and chunks still play in order.
+  const audioQueueRef = useRef<Promise<string | null>[]>([]);
   const isPlayingRef = useRef(false);
   
   // Reconnect state
@@ -208,7 +211,7 @@ export default function App() {
         // Check if it's binary audio data
         if (typeof event.data !== 'string') {
           // Debug removed
-          await playAudio(event.data);
+          playAudio(event.data);
           return;
         }
         
@@ -317,6 +320,8 @@ export default function App() {
         break;
 
       case 'response_start':
+        // Drop any stale audio still queued from a previous/interrupted turn.
+        audioQueueRef.current = [];
         setIsProcessing(false);
         setIsSpeaking(true);
         break;
@@ -377,28 +382,40 @@ export default function App() {
     });
   };
 
-  // Convert audio data to base64 URI
-  const audioToBase64 = async (audioData: Blob | ArrayBuffer): Promise<string | null> => {
-    try {
-      if (audioData instanceof ArrayBuffer) {
-        const bytes = new Uint8Array(audioData);
-        let binary = '';
-        for (let i = 0; i < bytes.byteLength; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
-        return 'data:audio/mpeg;base64,' + btoa(binary);
-      } else if (audioData instanceof Blob) {
-        return await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.readAsDataURL(audioData);
-        });
-      }
-      return null;
-    } catch (e) {
-      console.error('Failed to convert audio:', e);
-      return null;
+  // Convert audio data to a base64 data URI without blocking the JS thread.
+  // ArrayBuffers are converted in 16KB chunks inside setImmediate so streaming
+  // TTS chunks don't freeze the UI while a long clip is encoded.
+  const audioToBase64 = (audioData: Blob | ArrayBuffer): Promise<string | null> => {
+    if (audioData instanceof Blob) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(audioData);
+      });
     }
+
+    return new Promise((resolve) => {
+      setImmediate(() => {
+        try {
+          const bytes = new Uint8Array(audioData);
+          let binary = '';
+          const chunkSize = 16384;
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+            let chunkBinary = '';
+            for (let j = 0; j < chunk.length; j++) {
+              chunkBinary += String.fromCharCode(chunk[j]);
+            }
+            binary += chunkBinary;
+          }
+          resolve('data:audio/mpeg;base64,' + btoa(binary));
+        } catch (e) {
+          console.error('Failed to convert audio:', e);
+          resolve(null);
+        }
+      });
+    });
   };
 
   // Stop all audio playback and reset state
@@ -442,8 +459,9 @@ export default function App() {
     }
 
     while (audioQueueRef.current.length > 0 && isPlayingRef.current) {
-      const base64 = audioQueueRef.current.shift()!;
-      
+      const base64 = await audioQueueRef.current.shift()!;
+      if (!base64) continue;
+
       try {
         // Unload previous sound
         if (soundRef.current) {
@@ -498,14 +516,11 @@ export default function App() {
     }
   };
 
-  // Queue audio for playback
-  const playAudio = async (audioData: Blob | ArrayBuffer) => {
-    const base64 = await audioToBase64(audioData);
-    if (base64) {
-      // Debug removed
-      audioQueueRef.current.push(base64);
-      processAudioQueue();
-    }
+  // Queue audio for playback. The conversion promise is queued immediately so
+  // chunks keep their arrival order while encoding happens in the background.
+  const playAudio = (audioData: Blob | ArrayBuffer) => {
+    audioQueueRef.current.push(audioToBase64(audioData));
+    processAudioQueue();
   };
 
   const startRecording = async () => {
@@ -758,22 +773,19 @@ export default function App() {
         )}
         {messages.map((msg) => (
           <View
-            key={msg.id}
+            key={`${msg.id}-${msg.content.length}`}
             style={[
               styles.message,
               msg.role === 'user' ? styles.userMessage : styles.assistantMessage,
             ]}
           >
-            <Text
-              style={[
-                styles.messageText,
-                msg.role === 'user'
-                  ? styles.userMessageText
-                  : styles.assistantMessageText,
-              ]}
-            >
-              {msg.content}
-            </Text>
+            {msg.role === 'assistant' ? (
+              <ChatMarkdown content={msg.content} />
+            ) : (
+              <Text style={[styles.messageText, styles.userMessageText]}>
+                {msg.content}
+              </Text>
+            )}
           </View>
         ))}
         {currentTranscript && (
@@ -844,7 +856,7 @@ function ConfigScreen({ onSave }: { onSave: (config: Config) => void }) {
       Alert.alert('Error', 'Server URL and Token are required');
       return;
     }
-    onSave({ serverUrl, token, sessionKey });
+    onSave({ serverUrl, token, sessionKey, voice: 'nova' });
   };
 
   return (
