@@ -15,6 +15,8 @@ import {
   Keyboard,
 } from 'react-native';
 import { Audio } from 'expo-av';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ChatMarkdown from './ChatMarkdown';
 
@@ -31,6 +33,7 @@ interface Config {
   token: string;
   sessionKey: string;
   voice: string;
+  ttsEnabled: boolean;
 }
 
 const AVAILABLE_VOICES = [
@@ -118,6 +121,7 @@ export default function App() {
       const token = await AsyncStorage.getItem('token');
       const sessionKey = await AsyncStorage.getItem('sessionKey');
       const voice = await AsyncStorage.getItem('voice');
+      const ttsEnabledRaw = await AsyncStorage.getItem('ttsEnabled');
       
       if (serverUrl && token) {
         setConfig({
@@ -125,6 +129,7 @@ export default function App() {
           token,
           sessionKey: sessionKey || 'voice:mobile',
           voice: voice || 'nova',
+          ttsEnabled: ttsEnabledRaw === null ? true : ttsEnabledRaw === 'true',
         });
         setIsConfigured(true);
       }
@@ -143,6 +148,7 @@ export default function App() {
       await AsyncStorage.setItem('sessionKey', newConfig.sessionKey || 'voice:mobile');
       // Debug removed
       await AsyncStorage.setItem('voice', newConfig.voice || 'nova');
+      await AsyncStorage.setItem('ttsEnabled', String(newConfig.ttsEnabled !== false));
       // Debug removed
       
       // Small delay to ensure storage is committed before state change
@@ -165,6 +171,24 @@ export default function App() {
     await AsyncStorage.setItem('voice', voice);
     setConfig(newConfig);
   };
+
+  const toggleTts = async () => {
+    if (!config) return;
+    const newValue = !config.ttsEnabled;
+    const newConfig = { ...config, ttsEnabled: newValue };
+    await AsyncStorage.setItem('ttsEnabled', String(newValue));
+    setConfig(newConfig);
+    // If turning TTS off mid-playback, stop any audio immediately.
+    if (!newValue) {
+      await stopAudioPlayback();
+    }
+    // The tts flag is sent with each text/audio message, so the server
+    // picks up the new preference on the next turn automatically.
+  };
+
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadFile, setUploadFile] = useState<{ uri: string; name: string; mimeType?: string } | null>(null);
+  const [uploadInstruction, setUploadInstruction] = useState('');
 
   const connect = useCallback(async () => {
     if (!config) return;
@@ -205,6 +229,7 @@ export default function App() {
           type: 'auth',
           token: config.token,
           sessionKey: config.sessionKey,
+          tts: config.ttsEnabled !== false,
         }));
       };
 
@@ -604,6 +629,7 @@ export default function App() {
             data: base64,
             format: Platform.OS === 'web' ? 'webm' : 'm4a',
             voice: config?.voice || 'nova',
+            tts: config?.ttsEnabled !== false,
           }));
         };
         reader.readAsDataURL(blob);
@@ -640,7 +666,71 @@ export default function App() {
       type: 'text',
       text: text,
       voice: config?.voice || 'nova',
+      tts: config?.ttsEnabled !== false,
     }));
+  };
+
+  // Pick a file to upload; on success open the instruction modal.
+  const pickFileForUpload = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: '*/*',
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets?.length) return;
+      const asset = result.assets[0];
+      setUploadFile({ uri: asset.uri, name: asset.name, mimeType: asset.mimeType });
+      setUploadInstruction('');
+    } catch (e: any) {
+      setError(`Kon bestand niet kiezen: ${e.message}`);
+    }
+  };
+
+  // Send the picked file + instruction to the server upload endpoint.
+  const submitUpload = async () => {
+    if (!uploadFile || !config) return;
+    setIsUploading(true);
+    try {
+      const base64 = await FileSystem.readAsStringAsync(uploadFile.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const uploadUrl = config.serverUrl.replace(/\/$/, '') + '/upload';
+      const instruction = uploadInstruction.trim();
+
+      // Show the action in the chat immediately.
+      addMessage('user', `📎 ${uploadFile.name}${instruction ? `\n\n${instruction}` : ''}`);
+      const fileToSend = uploadFile;
+      setUploadFile(null);
+      setUploadInstruction('');
+      setIsProcessing(true);
+
+      const resp = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: config.token,
+          sessionKey: config.sessionKey,
+          filename: fileToSend.name,
+          instruction,
+          data: base64,
+          voice: config.voice,
+        }),
+      });
+      const json = await resp.json();
+      setIsProcessing(false);
+      if (!resp.ok || json.error) {
+        setError(`Upload mislukt: ${json.error || resp.status}`);
+      } else if (json.response) {
+        addMessage('assistant', json.response);
+      } else {
+        addMessage('assistant', 'Bestand ontvangen en opgeslagen.');
+      }
+    } catch (e: any) {
+      setIsProcessing(false);
+      setError(`Upload mislukt: ${e.message}`);
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   // Config screen
@@ -702,6 +792,25 @@ export default function App() {
               <Text style={[styles.settingsValue, { color: isConnected ? '#4CAF50' : '#ff6b6b' }]}>
                 {isConnected ? '● Connected' : '○ Disconnected'}
               </Text>
+            </View>
+
+            <View style={styles.settingsInfo}>
+              <View style={styles.ttsRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.settingsLabel}>Voice-terugkoppeling</Text>
+                  <Text style={styles.ttsHint}>
+                    {config?.ttsEnabled !== false
+                      ? 'Antwoorden worden voorgelezen'
+                      : 'Alleen tekst (sneller lezen)'}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.toggle, config?.ttsEnabled !== false && styles.toggleOn]}
+                  onPress={toggleTts}
+                >
+                  <View style={[styles.toggleKnob, config?.ttsEnabled !== false && styles.toggleKnobOn]} />
+                </TouchableOpacity>
+              </View>
             </View>
 
             <View style={styles.settingsInfo}>
@@ -811,8 +920,53 @@ export default function App() {
         )}
       </ScrollView>
 
+      {/* Upload instruction modal */}
+      {uploadFile && (
+        <View style={styles.settingsOverlay}>
+          <View style={styles.settingsModal}>
+            <Text style={styles.settingsTitle}>📎 Bestand uploaden</Text>
+            <View style={styles.settingsInfo}>
+              <Text style={styles.settingsLabel}>Bestand</Text>
+              <Text style={styles.settingsValue}>{uploadFile.name}</Text>
+            </View>
+            <View style={styles.settingsInfo}>
+              <Text style={styles.settingsLabel}>Instructie (optioneel)</Text>
+              <TextInput
+                style={styles.uploadInstructionInput}
+                value={uploadInstruction}
+                onChangeText={setUploadInstruction}
+                placeholder="Bijv: maak een gespreksverslag, analyseer deze PowerPoint, of sla op voor later"
+                placeholderTextColor="#666"
+                multiline
+              />
+            </View>
+            <TouchableOpacity
+              style={[styles.settingsButton, isUploading && { opacity: 0.5 }]}
+              onPress={submitUpload}
+              disabled={isUploading}
+            >
+              <Text style={styles.settingsButtonText}>{isUploading ? 'Uploaden...' : 'Verstuur'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => { setUploadFile(null); setUploadInstruction(''); }}
+              disabled={isUploading}
+            >
+              <Text style={styles.closeButtonText}>Annuleer</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       {/* Text input */}
       <View style={styles.textInputContainer}>
+        <TouchableOpacity
+          style={styles.uploadButton}
+          onPress={pickFileForUpload}
+          disabled={!isConnected || isProcessing || isSpeaking || isRecording}
+        >
+          <Text style={styles.uploadButtonIcon}>📎</Text>
+        </TouchableOpacity>
         <TextInput
           style={[
             styles.textInputField,
@@ -871,7 +1025,7 @@ function ConfigScreen({ onSave }: { onSave: (config: Config) => void }) {
       Alert.alert('Error', 'Server URL and Token are required');
       return;
     }
-    onSave({ serverUrl, token, sessionKey, voice: 'nova' });
+    onSave({ serverUrl, token, sessionKey, voice: 'nova', ttsEnabled: true });
   };
 
   return (
@@ -1074,6 +1228,58 @@ const styles = StyleSheet.create({
     backgroundColor: '#5c6bc0',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  uploadButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#3d3d5c',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  uploadButtonIcon: {
+    fontSize: 20,
+  },
+  uploadInstructionInput: {
+    backgroundColor: '#3d3d5c',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: '#fff',
+    fontSize: 15,
+    minHeight: 70,
+    textAlignVertical: 'top',
+    marginTop: 6,
+  },
+  ttsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  ttsHint: {
+    color: '#aaa',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  toggle: {
+    width: 52,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#555',
+    padding: 3,
+    justifyContent: 'center',
+  },
+  toggleOn: {
+    backgroundColor: '#5c6bc0',
+  },
+  toggleKnob: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    alignSelf: 'flex-start',
+  },
+  toggleKnobOn: {
+    alignSelf: 'flex-end',
   },
   micButtonActive: {
     backgroundColor: '#e53935',
