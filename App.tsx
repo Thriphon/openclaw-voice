@@ -679,6 +679,12 @@ export default function App() {
       });
       if (result.canceled || !result.assets?.length) return;
       const asset = result.assets[0];
+      // Client-side grootte-check (server staat max 150MB toe).
+      const MAX_UPLOAD_MB = 150;
+      if (typeof asset.size === 'number' && asset.size > MAX_UPLOAD_MB * 1024 * 1024) {
+        setError(`Bestand te groot (${(asset.size / 1048576).toFixed(0)} MB). Max ${MAX_UPLOAD_MB} MB.`);
+        return;
+      }
       setUploadFile({ uri: asset.uri, name: asset.name, mimeType: asset.mimeType });
       setUploadInstruction('');
     } catch (e: any) {
