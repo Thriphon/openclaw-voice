@@ -109,6 +109,16 @@ export default function App() {
   // Failsafe: if a reply never completes (WS drop, missing response_end),
   // this watchdog releases the input so the app never gets permanently stuck.
   const processingWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks whether the server is still handling a turn. The server stays busy
+  // (isProcessing=true) until it emits response_end — which, with TTS on, is
+  // AFTER all audio chunks are generated. The input unlocks earlier (at
+  // response_start) so you can type ahead, so we must not actually transmit a
+  // new message while the server is still busy or it is rejected as "Already
+  // processing" and lost. Instead we queue it and flush on response_end.
+  const serverBusyRef = useRef(false);
+  // FIFO queue of messages typed while a turn was still running. Each is shown
+  // in the chat immediately and transmitted one-by-one as turns complete.
+  const pendingSendRef = useRef<string[]>([]);
   
   // Reconnect state
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -356,6 +366,8 @@ export default function App() {
         // lock users hit on a flaky link).
         clearProcessingWatchdog();
         setIsProcessing(false);
+        serverBusyRef.current = false;
+        pendingSendRef.current = [];
         setIsSpeaking(false);
       };
 
@@ -366,6 +378,8 @@ export default function App() {
         // Same immediate release on close so a reconnect starts with a free input.
         clearProcessingWatchdog();
         setIsProcessing(false);
+        serverBusyRef.current = false;
+        pendingSendRef.current = [];
         setIsSpeaking(false);
         
         // Auto-reconnect if not intentionally disconnected
@@ -497,6 +511,7 @@ export default function App() {
         // when expo-av never fired didJustFinish for a TTS chunk, locking the
         // field until a 30s-per-chunk timeout — or until app restart.)
         setIsProcessing(false);
+        serverBusyRef.current = false;
         // Note: we intentionally do NOT force isSpeaking=false here while audio
         // is genuinely still playing (the playback loop clears it when done).
         // But if TTS is off, no audio will play, so clear it now.
@@ -506,6 +521,8 @@ export default function App() {
           setIsSpeaking(false);
         }
         clearProcessingWatchdog();
+        // Send any message that was queued while this turn was still running.
+        flushPendingSend();
         break;
 
       case 'error':
@@ -516,12 +533,19 @@ export default function App() {
         // resend, instead of showing an alarming banner.
         if (typeof data.message === 'string' &&
             data.message.toLowerCase().includes('already processing')) {
+          // Should no longer happen (we queue instead of transmitting mid-turn),
+          // but if it does, keep the server-busy flag so the queued message is
+          // still flushed on the real response_end. Just release the UI lock.
           setIsProcessing(false);
           clearProcessingWatchdog();
           break;
         }
         setError(data.message);
         setIsProcessing(false);
+        serverBusyRef.current = false;
+        // Drop any queued messages on a real error rather than auto-sending
+        // into a possibly-broken turn; the user can resend.
+        pendingSendRef.current = [];
         setIsSpeaking(false);
         clearProcessingWatchdog();
         break;
@@ -784,6 +808,7 @@ export default function App() {
         const reader = new FileReader();
         reader.onloadend = () => {
           const base64 = (reader.result as string).split(',')[1];
+          serverBusyRef.current = true;
           wsRef.current?.send(JSON.stringify({
             type: 'audio',
             data: base64,
@@ -807,6 +832,10 @@ export default function App() {
     if (isRecording) {
       await stopRecording();
     } else {
+      // Don't start a new recording while the server is still finishing the
+      // previous turn (e.g. TTS audio still streaming); it would be rejected
+      // as "Already processing". The mic simply ignores the tap until ready.
+      if (isProcessing || serverBusyRef.current) return;
       // Stop any lingering playback before recording a new message.
       if (isSpeaking) {
         await stopAudioPlayback();
@@ -815,30 +844,57 @@ export default function App() {
     }
   };
 
-  const sendTextMessage = async () => {
-    const text = textInput.trim();
-    if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    if (isProcessing) return;
-    // If audio from a previous reply is still playing, stop it so the new turn
-    // starts clean (and so a stuck playback state can't block anything).
-    if (isSpeaking) {
-      await stopAudioPlayback();
-    }
-
-    // Clear input and add message
-    setTextInput('');
-    setInputHeight(0);
-    addMessage('user', text);
+  // Actually transmit a text turn to the server and mark it busy.
+  // alreadyShown=true when the user message bubble was already added to the
+  // chat at queue time (so we don't add it twice).
+  const transmitText = (text: string, alreadyShown = false) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    // Stop any audio still playing from the previous reply so the new turn
+    // starts clean.
+    stopAudioPlayback();
+    if (!alreadyShown) addMessage('user', text);
     setIsProcessing(true);
+    serverBusyRef.current = true;
     armProcessingWatchdog();
-
-    // Send text message to server
     wsRef.current.send(JSON.stringify({
       type: 'text',
-      text: text,
+      text,
       voice: config?.voice || 'nova',
       tts: config?.ttsEnabled !== false,
     }));
+  };
+
+  // If a message was typed/sent while the server was still finishing the
+  // previous turn, transmit it now.
+  const flushPendingSend = () => {
+    if (pendingSendRef.current.length > 0) {
+      const next = pendingSendRef.current.shift()!;
+      // Already shown in the chat at queue time.
+      transmitText(next, true);
+    }
+  };
+
+  const sendTextMessage = async () => {
+    const text = textInput.trim();
+    if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
+    // Clear the input immediately for a responsive feel.
+    setTextInput('');
+    setInputHeight(0);
+
+    // If the server is still handling the previous turn (e.g. TTS audio is
+    // still streaming in), queue this message instead of transmitting now.
+    // Transmitting mid-turn would be rejected as "Already processing" and the
+    // message would be lost. It flushes automatically on response_end.
+    if (isProcessing || serverBusyRef.current) {
+      // Queue it (FIFO) and show it right away so the user sees it was
+      // accepted; it transmits automatically once the current turn finishes.
+      pendingSendRef.current.push(text);
+      addMessage('user', text);
+      return;
+    }
+
+    transmitText(text);
   };
 
   // Pick a file to upload; on success open the instruction modal.
