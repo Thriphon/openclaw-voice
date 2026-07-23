@@ -351,12 +351,22 @@ export default function App() {
         console.error('WebSocket error:', e);
         setError('Connection error');
         setIsConnected(false);
+        // A dropped/errored socket must free the input immediately instead of
+        // waiting for the reply watchdog to fire (the "already processing"
+        // lock users hit on a flaky link).
+        clearProcessingWatchdog();
+        setIsProcessing(false);
+        setIsSpeaking(false);
       };
 
       ws.onclose = () => {
         // Debug removed
         setIsConnected(false);
         wsRef.current = null;
+        // Same immediate release on close so a reconnect starts with a free input.
+        clearProcessingWatchdog();
+        setIsProcessing(false);
+        setIsSpeaking(false);
         
         // Auto-reconnect if not intentionally disconnected
         if (shouldReconnectRef.current && reconnectAttemptsRef.current < maxReconnectAttempts) {
