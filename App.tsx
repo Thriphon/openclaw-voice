@@ -36,6 +36,29 @@ interface Config {
   ttsEnabled: boolean;
 }
 
+// --- Local chat-history persistence (Option A) ---
+// History is saved locally per sessionKey so reopening the app restores the
+// last conversation. Auto-pruned by count and age; also clearable by hand.
+const HISTORY_KEY_PREFIX = 'chatHistory:';
+const HISTORY_MAX_MESSAGES = 200;              // keep the most recent N messages
+const HISTORY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // drop anything older than 30 days
+
+function historyStorageKey(sessionKey: string | undefined): string {
+  return HISTORY_KEY_PREFIX + (sessionKey || 'voice:mobile');
+}
+
+// Apply age + count limits and return the pruned list (newest kept).
+function pruneHistory(msgs: Message[]): Message[] {
+  const cutoff = Date.now() - HISTORY_MAX_AGE_MS;
+  const fresh = msgs.filter((m) => {
+    const t = m.timestamp instanceof Date ? m.timestamp.getTime() : new Date(m.timestamp).getTime();
+    return !isNaN(t) ? t >= cutoff : true;
+  });
+  return fresh.length > HISTORY_MAX_MESSAGES
+    ? fresh.slice(fresh.length - HISTORY_MAX_MESSAGES)
+    : fresh;
+}
+
 const AVAILABLE_VOICES = [
   { id: 'nova', name: 'Nova', description: 'Warm female' },
   { id: 'alloy', name: 'Alloy', description: 'Neutral balanced' },
@@ -76,6 +99,9 @@ export default function App() {
   // conversion happens off the critical path and chunks still play in order.
   const audioQueueRef = useRef<Promise<string | null>[]>([]);
   const isPlayingRef = useRef(false);
+  // Guards history auto-save until the persisted history has been loaded, so
+  // an initial empty state never overwrites a saved conversation.
+  const historyLoadedRef = useRef(false);
   // Mirror of config.ttsEnabled so async WS/audio callbacks never read stale
   // closure state. When TTS is off we must not queue or wait on any audio,
   // otherwise the input stays locked waiting for playback that never finishes.
@@ -134,19 +160,72 @@ export default function App() {
       const ttsEnabledRaw = await AsyncStorage.getItem('ttsEnabled');
       
       if (serverUrl && token) {
+        const effectiveSessionKey = sessionKey || 'voice:mobile';
         setConfig({
           serverUrl,
           token,
-          sessionKey: sessionKey || 'voice:mobile',
+          sessionKey: effectiveSessionKey,
           voice: voice || 'nova',
           ttsEnabled: ttsEnabledRaw === null ? true : ttsEnabledRaw === 'true',
         });
+        // Restore locally-saved chat history for this session (Option A).
+        await loadHistory(effectiveSessionKey);
         setIsConfigured(true);
+      } else {
+        // No config yet: nothing to restore, but allow auto-save to start.
+        historyLoadedRef.current = true;
       }
     } catch (e) {
       console.error('Failed to load config:', e);
+      historyLoadedRef.current = true;
     }
   };
+
+  // Load persisted chat history for a session, pruning old/excess messages.
+  const loadHistory = async (sessionKey: string) => {
+    try {
+      const raw = await AsyncStorage.getItem(historyStorageKey(sessionKey));
+      if (raw) {
+        const parsed: Message[] = JSON.parse(raw).map((m: any) => ({
+          ...m,
+          timestamp: new Date(m.timestamp),
+        }));
+        const pruned = pruneHistory(parsed);
+        setMessages(pruned);
+        // If pruning changed anything, persist the trimmed version back.
+        if (pruned.length !== parsed.length) {
+          await AsyncStorage.setItem(
+            historyStorageKey(sessionKey),
+            JSON.stringify(pruned)
+          );
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load chat history:', e);
+    } finally {
+      historyLoadedRef.current = true;
+    }
+  };
+
+  // Clear persisted history for the current session and the on-screen chat.
+  const clearHistory = async () => {
+    try {
+      await AsyncStorage.removeItem(historyStorageKey(config?.sessionKey));
+    } catch (e) {
+      console.error('Failed to clear chat history:', e);
+    }
+    setMessages([]);
+  };
+
+  // Auto-save chat history whenever messages change (after initial load).
+  useEffect(() => {
+    if (!historyLoadedRef.current) return;
+    const key = historyStorageKey(config?.sessionKey);
+    const pruned = pruneHistory(messages);
+    AsyncStorage.setItem(key, JSON.stringify(pruned)).catch((e) =>
+      console.error('Failed to save chat history:', e)
+    );
+  }, [messages, config?.sessionKey]);
 
   const saveConfig = async (newConfig: Config) => {
     try {
@@ -324,14 +403,17 @@ export default function App() {
             await stopAudioPlayback();
             // Run logout
             disconnect();
+            const oldSessionKey = config?.sessionKey;
             setConfig(null);
             setIsConfigured(false);
             setMessages([]);
             setCurrentTranscript('');
             setIsProcessing(false);
-            // Clear storage in background
-            AsyncStorage.multiRemove(['serverUrl', 'token', 'sessionKey', 'voice'])
-              .catch(e => console.error('Failed to clear storage:', e));
+            // Clear storage in background (incl. this session's saved history)
+            AsyncStorage.multiRemove([
+              'serverUrl', 'token', 'sessionKey', 'voice',
+              historyStorageKey(oldSessionKey),
+            ]).catch(e => console.error('Failed to clear storage:', e));
           },
         },
       ]
@@ -868,7 +950,7 @@ export default function App() {
               style={styles.settingsButton}
               onPress={async () => {
                 await stopAudioPlayback();
-                setMessages([]);
+                await clearHistory();
                 setCurrentTranscript('');
                 setIsProcessing(false);
                 setShowSettings(false);
