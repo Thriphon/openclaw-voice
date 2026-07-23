@@ -106,6 +106,9 @@ export default function App() {
   // closure state. When TTS is off we must not queue or wait on any audio,
   // otherwise the input stays locked waiting for playback that never finishes.
   const ttsEnabledRef = useRef(true);
+  // Failsafe: if a reply never completes (WS drop, missing response_end),
+  // this watchdog releases the input so the app never gets permanently stuck.
+  const processingWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Reconnect state
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -387,6 +390,8 @@ export default function App() {
     wsRef.current = null;
     setIsConnected(false);
     setError(null);
+    clearProcessingWatchdog();
+    setIsProcessing(false);
   };
 
   const logout = () => {
@@ -420,6 +425,25 @@ export default function App() {
     );
   };
 
+  // Arm a watchdog that force-releases the input if no reply completes in time.
+  const armProcessingWatchdog = () => {
+    if (processingWatchdogRef.current) clearTimeout(processingWatchdogRef.current);
+    processingWatchdogRef.current = setTimeout(() => {
+      console.warn('Reply watchdog fired — releasing input');
+      setIsProcessing(false);
+      setIsSpeaking(false);
+      audioQueueRef.current = [];
+      isPlayingRef.current = false;
+    }, 90000); // 90s hard cap per turn
+  };
+
+  const clearProcessingWatchdog = () => {
+    if (processingWatchdogRef.current) {
+      clearTimeout(processingWatchdogRef.current);
+      processingWatchdogRef.current = null;
+    }
+  };
+
   const handleMessage = (data: any) => {
     switch (data.type) {
       case 'authenticated':
@@ -449,27 +473,36 @@ export default function App() {
         setIsSpeaking(true);
         break;
 
+
       case 'response_text':
         // Streaming text response
         updateLastAssistantMessage(data.text, data.final);
         break;
 
       case 'response_end':
-        // Fully reset audio state so a stale/late chunk can't keep the input
-        // locked. Critical when TTS is off (no audio ever arrives to clear it),
-        // but also safe when TTS is on: response_end only fires after the LLM
-        // stream completes and all TTS has been sent.
+        // The reply is fully generated and streamed. Release the input NOW,
+        // regardless of audio playback state. Audio may keep playing in the
+        // background; the user must still be able to type/record immediately.
+        // (Previously input was gated on isSpeaking, which could get stuck
+        // when expo-av never fired didJustFinish for a TTS chunk, locking the
+        // field until a 30s-per-chunk timeout — or until app restart.)
+        setIsProcessing(false);
+        // Note: we intentionally do NOT force isSpeaking=false here while audio
+        // is genuinely still playing (the playback loop clears it when done).
+        // But if TTS is off, no audio will play, so clear it now.
         if (ttsEnabledRef.current === false) {
           audioQueueRef.current = [];
           isPlayingRef.current = false;
+          setIsSpeaking(false);
         }
-        setIsSpeaking(false);
+        clearProcessingWatchdog();
         break;
 
       case 'error':
         setError(data.message);
         setIsProcessing(false);
         setIsSpeaking(false);
+        clearProcessingWatchdog();
         break;
     }
   };
@@ -715,6 +748,7 @@ export default function App() {
 
       setIsRecording(false);
       setIsProcessing(true);
+      armProcessingWatchdog();
 
       await recordingRef.current.stopAndUnloadAsync();
       const uri = recordingRef.current.getURI();
@@ -743,6 +777,7 @@ export default function App() {
       console.error('Failed to stop recording:', e);
       setError('Failed to process recording');
       setIsProcessing(false);
+      clearProcessingWatchdog();
     }
   };
 
@@ -751,6 +786,10 @@ export default function App() {
     if (isRecording) {
       await stopRecording();
     } else {
+      // Stop any lingering playback before recording a new message.
+      if (isSpeaking) {
+        await stopAudioPlayback();
+      }
       await startRecording();
     }
   };
@@ -758,13 +797,19 @@ export default function App() {
   const sendTextMessage = async () => {
     const text = textInput.trim();
     if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    if (isProcessing || isSpeaking) return;
+    if (isProcessing) return;
+    // If audio from a previous reply is still playing, stop it so the new turn
+    // starts clean (and so a stuck playback state can't block anything).
+    if (isSpeaking) {
+      await stopAudioPlayback();
+    }
 
     // Clear input and add message
     setTextInput('');
     setInputHeight(0);
     addMessage('user', text);
     setIsProcessing(true);
+    armProcessingWatchdog();
 
     // Send text message to server
     wsRef.current.send(JSON.stringify({
@@ -1074,7 +1119,7 @@ export default function App() {
         <TouchableOpacity
           style={styles.uploadButton}
           onPress={pickFileForUpload}
-          disabled={!isConnected || isProcessing || isSpeaking || isRecording}
+          disabled={!isConnected || isProcessing || isRecording}
         >
           <Text style={styles.uploadButtonIcon}>📎</Text>
         </TouchableOpacity>
@@ -1090,14 +1135,14 @@ export default function App() {
           }
           placeholder="Type a message..."
           placeholderTextColor="#666"
-          editable={isConnected && !isProcessing && !isSpeaking && !isRecording}
+          editable={isConnected && !isProcessing && !isRecording}
           multiline
         />
         {textInput.trim() ? (
           <TouchableOpacity
             style={styles.sendButton}
             onPress={sendTextMessage}
-            disabled={!isConnected || isProcessing || isSpeaking}
+            disabled={!isConnected || isProcessing}
           >
             <Text style={styles.sendButtonText}>↑</Text>
           </TouchableOpacity>
@@ -1105,11 +1150,11 @@ export default function App() {
           <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
             <TouchableOpacity
               onPress={toggleRecording}
-              disabled={!isConnected || isProcessing || isSpeaking}
+              disabled={!isConnected || isProcessing}
               style={[
                 styles.micButton,
                 isRecording && styles.micButtonActive,
-                (!isConnected || isProcessing || isSpeaking) &&
+                (!isConnected || isProcessing) &&
                   styles.micButtonDisabled,
               ]}
             >
