@@ -499,6 +499,17 @@ export default function App() {
         break;
 
       case 'error':
+        // "Already processing" is a transient server-race: our previous turn's
+        // lock hadn't cleared the instant we sent the next message. The server
+        // now frees its lock before response_end, so this should not occur; if
+        // it still does, just release local state quietly and let the user
+        // resend, instead of showing an alarming banner.
+        if (typeof data.message === 'string' &&
+            data.message.toLowerCase().includes('already processing')) {
+          setIsProcessing(false);
+          clearProcessingWatchdog();
+          break;
+        }
         setError(data.message);
         setIsProcessing(false);
         setIsSpeaking(false);
