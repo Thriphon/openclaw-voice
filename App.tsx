@@ -76,6 +76,10 @@ export default function App() {
   // conversion happens off the critical path and chunks still play in order.
   const audioQueueRef = useRef<Promise<string | null>[]>([]);
   const isPlayingRef = useRef(false);
+  // Mirror of config.ttsEnabled so async WS/audio callbacks never read stale
+  // closure state. When TTS is off we must not queue or wait on any audio,
+  // otherwise the input stays locked waiting for playback that never finishes.
+  const ttsEnabledRef = useRef(true);
   
   // Reconnect state
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -114,6 +118,12 @@ export default function App() {
   useEffect(() => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
   }, [messages]);
+
+  // Keep the TTS ref in sync with config so async WS/audio callbacks always
+  // read the current value (state closures inside ws.onmessage go stale).
+  useEffect(() => {
+    ttsEnabledRef.current = config?.ttsEnabled !== false;
+  }, [config?.ttsEnabled]);
 
   const loadConfig = async () => {
     try {
@@ -236,7 +246,12 @@ export default function App() {
       ws.onmessage = async (event) => {
         // Check if it's binary audio data
         if (typeof event.data !== 'string') {
-          // Debug removed
+          // Ignore audio entirely when TTS is disabled. A stale/late chunk would
+          // otherwise restart the playback loop and re-lock the input field
+          // until the 30s per-chunk timeout elapses.
+          if (ttsEnabledRef.current === false) {
+            return;
+          }
           playAudio(event.data);
           return;
         }
@@ -358,6 +373,14 @@ export default function App() {
         break;
 
       case 'response_end':
+        // Fully reset audio state so a stale/late chunk can't keep the input
+        // locked. Critical when TTS is off (no audio ever arrives to clear it),
+        // but also safe when TTS is on: response_end only fires after the LLM
+        // stream completes and all TTS has been sent.
+        if (ttsEnabledRef.current === false) {
+          audioQueueRef.current = [];
+          isPlayingRef.current = false;
+        }
         setIsSpeaking(false);
         break;
 
